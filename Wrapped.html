@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <title>Mapa Interativo - Canções com Verovio</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    #map { height: 100vh; }
+    .popup-content { font-family: sans-serif; }
+    #meiModal {
+      display: none;
+      position: fixed;
+      top: 5%;
+      left: 5%;
+      width: 90%;
+      height: 90%;
+      background: white;
+      border: 2px solid #333;
+      overflow: auto;
+      z-index: 1000;
+      padding: 1em;
+    }
+    #closeBtn {
+      position: absolute;
+      top: 10px;
+      right: 15px;
+      background: red;
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    #meiContainer {
+      text-align: center;
+    }
+    #meiContainer svg {
+      display: inline-block;
+    }
+    #meiContainer .note-highlight {
+      stroke: orange !important;
+      stroke-width: 3 !important;
+      fill: yellow !important;
+      filter: drop-shadow(0 0 6px gold);
+    }
+    #meiContainer .vrv-cursor {
+      stroke: red !important;
+      stroke-width: 4px !important;
+      fill: none !important;
+      opacity: 0.9 !important;
+      pointer-events: none;
+    }
+    #meiContainer .vrv-cursor-rect {
+      stroke: red !important;
+      stroke-width: 2px !important;
+      fill: rgba(255,0,0,0.15) !important;
+      opacity: 0.7 !important;
+      pointer-events: none;
+    }
+    #filters {
+      padding: 1em;
+      background: #f8f8f8;
+      border-bottom: 1px solid #ccc;
+    }
+    #filters strong {
+      margin-right: 1em;
+    }
+    #filters span {
+      margin-left: 1em;
+    }
+    #introPage {
+      position: fixed;
+      z-index: 2000;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: white;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    #enterMapBtn {
+      margin-top: 2em;
+      padding: 1em 2em;
+      font-size: 1.2em;
+      cursor: pointer;
+      background: #0078d7;
+      color: white;
+      border: none;
+      border-radius: 6px;
+    }
+  </style>
+  <script src="https://www.verovio.org/javascript/latest/verovio-toolkit-wasm.js?umdbuild"></script>
+</head>
+<body>
+  <div id="introPage">
+    <div style="max-width:600px;text-align:center;">
+      <h1>Bem-vindo ao Mapa Interativo de Canções Ibéricas</h1>
+      <p>
+        Este projeto apresenta um mapa interativo com canções tradicionais de Portugal e Espanha, permitindo visualizar partituras MEI, ouvir a reprodução MIDI e explorar diferentes temas e dificuldades.<br><br>
+        Use os filtros para explorar as canções por localização, dificuldade ou temática. Clique nos marcadores do mapa para abrir a partitura e ouvir a música.
+      </p>
+      <button id="enterMapBtn">Entrar no Mapa</button>
+    </div>
+  </div>
+
+  <div id="filters" style="display:none;">
+    <strong>Filter:</strong>
+    <span>Location:
+      <select id="filter-location">
+        <option value="">All</option>
+        <option value="Portugal">Portugal</option>
+        <option value="Spain">Spain</option>
+      </select>
+    </span>
+    <span>Difficulty:
+      <select id="filter-difficulty">
+        <option value="">All</option>
+        <option value="Easy">Easy</option>
+        <option value="Medium">Medium</option>
+        <option value="Hard">Hard</option>
+      </select>
+    </span>
+    <span>Thematic:
+      <select id="filter-thematic">
+        <option value="">All</option>
+        <option value="Lullaby">Lullaby</option>
+        <option value="Children's song">Children's song</option>
+      </select>
+    </span>
+  </div>
+
+  <div id="map" style="display:none;"></div>
+
+  <div id="meiModal">
+    <button id="closeBtn">Fechar</button>
+    <div id="meiContainer"></div>
+    <div>
+      <button onclick="player.play()">▶️ Play</button>
+      <button onclick="player.pause()">⏸️ Pause</button>
+      <button onclick="player.stop()">⏹️ Stop</button>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <script>
+    const songs = [
+      {
+        id: "pt001",
+        title: "PT 1981 BR MG 004",
+        location: [41.8072, -6.75919],
+        region: "Portugal",
+        meiFile: "PT-1981-BR-MG-004.mei"
+      },
+      {
+        id: "pt002",
+        title: "PT 1981 FA MG 002",
+        location: [37.0154, -7.93511],
+        region: "Portugal",
+        meiFile: "PT-1981-FA-MG-002.mei"
+      },
+      {
+        id: "pt003",
+        title: "PT 1981 VC MG 003",
+        location: [41.6946, -8.83016],
+        region: "Portugal",
+        meiFile: "PT-1981-VC-MG-003.mei"
+      },
+      {
+        id: "pt004",
+        title: "PT 1981 VI MG 001",
+        location: [40.6575, -7.91428],
+        region: "Portugal",
+        meiFile: "PT-1981-VI-MG-001.mei"
+      },
+      {
+        id: "pt005",
+        title: "PT 1981 VI MG 005",
+        location: [40.2195, -8.05385],
+        region: "Portugal",
+        meiFile: "PT-1981-VI-MG-005.mei"
+      },
+      {
+        id: "sp001",
+        title: "15. Cómo quieres que te tenga. — El Trepeletre",
+        location: [43.4623, -3.8099],
+        region: "Spain",
+        meiFile: "ES-1948-CB-CO-015.mei"
+      },
+      {
+        id: "sp002",
+        title: "27. En Salamanca tengo",
+        location: [40.9701, -5.6635],
+        region: "Spain",
+        meiFile: "ES-1948-CB-CO-027.mei"
+      },
+      {
+        id: "sp003",
+        title: "118. Dónde va la mi cojita",
+        location: [43.3210, -4.0500],
+        region: "Spain",
+        meiFile: "ES-1948-CB-CO-118.mei"
+      },
+      {
+        id: "sp004",
+        title: "177. Tres hojitas. — Inés",
+        location: [43.3510, -4.0500],
+        region: "Spain",
+        meiFile: "ES-1948-CB-CO-177.mei"
+      },
+      {
+        id: "sp005",
+        title: "181. Una pulga",
+        location: [43.3210, -4.1000],
+        region: "Spain",
+        meiFile: "ES-1948-CB-CO-181.mei"
+      },
+      {
+        id: "sp006",
+        title: "204. A la flor",
+        location: [43.3210, -4.1500],
+        region: "Spain",
+        meiFile: "ES-1948-CB-CO-204.mei"
+      },
+      {
+        id: "sp007",
+        title: "270. La viudita",
+        location: [43.2870, -3.9800],
+        region: "Spain",
+        meiFile: "ES-1948-CB-CO-270.mei"
+      },
+      {
+        id: "sp008",
+        title: "276. Tío Melitón",
+        location: [43.3000, -4.2000],
+        region: "Spain",
+        meiFile: "ES-1948-CB-CO-276.mei"
+      },
+      {
+        id: "sp009",
+        title: "422. Tiene la Tarara",
+        location: [43.3400, -4.0800],
+        region: "Spain",
+        meiFile: "ES-1948-CB-CO-422.mei"
+      }
+    ];
+
+    // Ensure Verovio is loaded before any code runs
+    window.addEventListener('DOMContentLoaded', async () => {
+      console.log("Page loaded");
+      const meiContainer = document.getElementById('meiContainer');
+      // Wait for Verovio to be available
+      function waitForVerovio() {
+        return new Promise((resolve, reject) => {
+          if (window.verovio && window.verovio.toolkit) return resolve();
+          let tries = 0;
+          const interval = setInterval(() => {
+            if (window.verovio && window.verovio.toolkit) {
+              clearInterval(interval);
+              resolve();
+            } else if (++tries > 50) {
+              clearInterval(interval);
+              reject('Verovio toolkit not loaded');
+            }
+          }, 100);
+        });
+      }
+
+      await waitForVerovio();
+
+      // Dynamically load @tonejs/midi and Tone.js
+      function loadTonejsMidiScript() {
+        return new Promise((resolve, reject) => {
+          let loaded = 0;
+          function checkDone() { loaded++; if (loaded === 2) resolve(); }
+          // Tone.js
+          if (!window.Tone) {
+            const scriptTone = document.createElement('script');
+            scriptTone.src = 'https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js';
+            scriptTone.onload = checkDone;
+            scriptTone.onerror = reject;
+            document.body.appendChild(scriptTone);
+          } else { loaded++; }
+          // @tonejs/midi
+          if (!window.Midi) {
+            const scriptMidi = document.createElement('script');
+            scriptMidi.src = 'https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.27/build/Midi.js';
+            scriptMidi.onload = checkDone;
+            scriptMidi.onerror = reject;
+            document.body.appendChild(scriptMidi);
+          } else { loaded++; }
+        });
+      }
+
+      let toneMidiReady = false;
+      let toolkit;
+      let midiData = null;
+      let synth = null;
+      let playing = false;
+      let midiObj = null;
+      let scheduledIds = [];
+      let playStartTime = 0;
+      let pauseTime = 0;
+      let midiMapping = null;
+      let cursorAnimationId = null;
+      let svgWidth = 0;
+      let svgHeight = 0;
+      let midiDuration = 0;
+
+      function updateVerovioCursor(currentTime) {
+        if (!toolkit) return;
+        // Re-render SVG with cursor at currentTime (in seconds)
+        const svg = toolkit.renderToSVG(1, { cursor: currentTime });
+        if (svg && svg.trim() !== '') {
+          meiContainer.innerHTML = svg;
+        }
+      }
+
+      function updateCursorVerovio() {
+        if (!playing || !toolkit || !window.Tone || !window.Tone.Transport) return;
+        const now = Tone.Transport.seconds;
+        updateVerovioCursor(now);
+        cursorAnimationId = requestAnimationFrame(updateCursorVerovio);
+      }
+
+      function removeCursor() {
+        if (cursorAnimationId) cancelAnimationFrame(cursorAnimationId);
+        cursorAnimationId = null;
+        // Optionally, re-render SVG without cursor
+        if (toolkit) {
+          const svg = toolkit.renderToSVG(1, {});
+          if (svg && svg.trim() !== '') {
+            meiContainer.innerHTML = svg;
+          }
+        }
+      }
+
+      async function loadVerovio(meiUrl) {
+        try {
+          if (!toneMidiReady) {
+            await loadTonejsMidiScript();
+            toneMidiReady = true;
+          }
+          const response = await fetch(meiUrl);
+          if (!response.ok) throw new Error('Erro ao carregar o ficheiro MEI');
+          const meiData = await response.text();
+          if (!window.verovioToolkitInstance) {
+            window.verovioToolkitInstance = new window.verovio.toolkit();
+          }
+          toolkit = window.verovioToolkitInstance;
+          toolkit.setOptions({
+            scale: 50,
+            adjustPageHeight: true,
+            pageHeight: 2000,
+            pageWidth: 1500
+          });
+          toolkit.loadData(meiData, "mei");
+          const svg = toolkit.renderToSVG(1, {});
+          if (!svg || svg.trim() === '') {
+            meiContainer.innerHTML = '<span style="color:red">Erro ao renderizar a partitura.</span>';
+            return;
+          }
+          meiContainer.innerHTML = svg;
+          // Get MIDI data as Uint8Array and mapping
+          let midiBuffer = toolkit.renderToMIDI({mapping: true});
+          // If it's a base64 string, decode to Uint8Array
+          if (typeof midiBuffer === 'object' && midiBuffer.data && midiBuffer.mapping) {
+            // Verovio >=4 returns {data, mapping}
+            midiMapping = midiBuffer.mapping;
+            midiBuffer = midiBuffer.data;
+            window.midiMapping = midiMapping; // set global
+          } else {
+            midiMapping = null;
+            window.midiMapping = null;
+          }
+          if (typeof midiBuffer === 'string') {
+            function base64ToUint8Array(base64) {
+              const binary = atob(base64);
+              const len = binary.length;
+              const bytes = new Uint8Array(len);
+              for (let i = 0; i < len; i++) {
+                bytes[i] = binary.charCodeAt(i);
+              }
+              return bytes;
+            }
+            midiBuffer = base64ToUint8Array(midiBuffer);
+          } else if (midiBuffer instanceof ArrayBuffer) {
+            midiBuffer = new Uint8Array(midiBuffer);
+          }
+          midiData = midiBuffer;
+          // Set midiObj globally before addCursorToSVG, but only if Midi is available
+          let tempMidi = null;
+          if (window.Midi) {
+            tempMidi = new Midi(midiBuffer);
+            midiDuration = tempMidi.duration;
+            midiObj = tempMidi;
+            window.midiObj = tempMidi;
+          } else {
+            midiObj = null;
+            window.midiObj = null;
+          }
+          playing = false;
+          pauseTime = 0;
+          playStartTime = 0;
+          scheduledIds = [];
+        } catch (err) {
+          console.error('Erro ao carregar/verovio:', err);
+          meiContainer.innerHTML = '<span style="color:red">Erro ao carregar ou processar a partitura.</span>';
+        }
+      }
+
+      function highlightNotes(noteIds, note) {
+        if (!noteIds || noteIds.length === 0) {
+          // Fallback: try to highlight by pitch if mapping fails
+          if (note && note.name && note.oct) {
+            const pname = note.name.replace(/\d+/, '').toLowerCase();
+            const oct = note.oct;
+            const fallbackEls = document.querySelectorAll(`#meiContainer [data-pname='${pname}'][data-oct='${oct}']`);
+            fallbackEls.forEach(el => el.classList.add('note-highlight'));
+            console.log('Fallback highlight for', pname, oct, fallbackEls.length);
+          } else {
+            console.log('No noteIds and no note info for fallback');
+          }
+          return;
+        }
+        noteIds.forEach(id => {
+          let el = document.querySelector(`#meiContainer [data-id='${id}']`);
+          if (el) {
+            el.classList.add('note-highlight');
+            el.querySelectorAll('*').forEach(child => child.classList.add('note-highlight'));
+            console.log('Highlighting', id, el);
+          } else {
+            const descendants = document.querySelectorAll(`#meiContainer [data-id*='${id}']`);
+            descendants.forEach(d => d.classList.add('note-highlight'));
+            console.log('Highlighting descendants for', id, descendants.length);
+          }
+        });
+      }
+      function unhighlightNotes(noteIds, note) {
+        if (!noteIds || noteIds.length === 0) {
+          // Fallback: try to unhighlight by pitch if mapping fails
+          if (note && note.name && note.oct) {
+            const pname = note.name.replace(/\d+/, '').toLowerCase();
+            const oct = note.oct;
+            const fallbackEls = document.querySelectorAll(`#meiContainer [data-pname='${pname}'][data-oct='${oct}']`);
+            fallbackEls.forEach(el => el.classList.remove('note-highlight'));
+            console.log('Fallback unhighlight for', pname, oct, fallbackEls.length);
+          }
+          return;
+        }
+        noteIds.forEach(id => {
+          let el = document.querySelector(`#meiContainer [data-id='${id}']`);
+          if (el) {
+            el.classList.remove('note-highlight');
+            el.querySelectorAll('*').forEach(child => child.classList.remove('note-highlight'));
+            console.log('Unhighlighting', id, el);
+          } else {
+            const descendants = document.querySelectorAll(`#meiContainer [data-id*='${id}']`);
+            descendants.forEach(d => d.classList.remove('note-highlight'));
+            console.log('Unhighlighting descendants for', id, descendants.length);
+          }
+        });
+      }
+
+      // --- Song filter metadata ---
+      const difficultyMap = {
+        Easy:    ["sp003", "sp004", "sp005", "sp009", "pt005"],
+        Medium:  ["sp006", "sp007", "sp008", "pt002", "pt003", "pt004"],
+        Hard:    ["sp001", "sp002", "pt005", "pt001"]
+      };
+      const thematicMap = {
+        "Lullaby": ["pt001", "pt002", "pt003", "pt004", "pt005"],
+        "Children's song": ["sp001", "sp002", "sp003", "sp004", "sp005", "sp006", "sp007", "sp008", "sp009"]
+      };
+
+      // --- Filtering logic ---
+      function getSongDifficulty(id) {
+        for (const [level, arr] of Object.entries(difficultyMap)) {
+          if (arr.includes(id)) return level;
+        }
+        return '';
+      }
+      function getSongThematic(id) {
+        for (const [theme, arr] of Object.entries(thematicMap)) {
+          if (arr.includes(id)) return theme;
+        }
+        return '';
+      }
+
+      function filterSongs() {
+        const loc = document.getElementById('filter-location').value;
+        const diff = document.getElementById('filter-difficulty').value;
+        const them = document.getElementById('filter-thematic').value;
+        return songs.filter(song => {
+          if (loc && song.region !== loc) return false;
+          if (diff && getSongDifficulty(song.id) !== diff) return false;
+          if (them && getSongThematic(song.id) !== them) return false;
+          return true;
+        });
+      }
+
+      // --- Map marker rendering with filters ---
+      let markerGroup;
+      function renderMarkers() {
+        if (markerGroup) markerGroup.clearLayers();
+        markerGroup = L.layerGroup().addTo(map);
+        filterSongs().forEach(song => {
+          const marker = L.marker(song.location).addTo(markerGroup);
+          marker.bindPopup(`<b>${song.title}</b><br>${song.region}`);
+          marker.on('click', async () => {
+            document.getElementById('meiModal').style.display = 'block';
+            document.getElementById('meiContainer').innerHTML = '<em>Carregando partitura...</em>';
+            await loadVerovio(song.meiFile);
+          });
+        });
+      }
+
+      // --- Filter event listeners ---
+      document.getElementById('filter-location').addEventListener('change', renderMarkers);
+      document.getElementById('filter-difficulty').addEventListener('change', renderMarkers);
+      document.getElementById('filter-thematic').addEventListener('change', renderMarkers);
+
+      // === MAP AND MARKER INITIALIZATION ===
+      const map = L.map('map').setView([39.5, -8], 7);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(map);
+
+      // Add markers for each song
+      renderMarkers();
+
+      // Close modal button
+      document.getElementById('closeBtn').onclick = () => {
+        document.getElementById('meiModal').style.display = 'none';
+        if (window.player && window.player.stop) window.player.stop();
+      };
+
+      // Intro button
+      document.getElementById('enterMapBtn').onclick = () => {
+        document.getElementById('introPage').style.display = 'none';
+        document.getElementById('map').style.display = '';
+        document.getElementById('filters').style.display = '';
+        // Force Leaflet to recalculate map size
+        setTimeout(() => { map.invalidateSize(); }, 100);
+        // Zoom to Iberian Peninsula
+        map.setView([40.0, -4.5], 6);
+      };
+
+      window.player = {
+        play: async () => {
+          if (!midiData || !window.Tone || !window.Midi) return;
+          if (!synth) synth = new Tone.PolySynth().toDestination();
+          if (playing) return;
+          playing = true;
+          Tone.start();
+          midiObj = new Midi(midiData);
+          scheduledIds = [];
+          midiObj.tracks.forEach((track, trackIdx) => {
+            track.notes.forEach(note => {
+              let noteIds = null;
+              if (midiMapping && midiMapping.tracks && midiMapping.tracks[trackIdx]) {
+                const mappingNote = midiMapping.tracks[trackIdx].notes.find(mn =>
+                  Math.abs(mn.time - note.time) < 0.01 && mn.midi === note.midi
+                );
+                if (mappingNote && mappingNote.ids) noteIds = mappingNote.ids;
+              }
+              const id1 = Tone.Transport.schedule((time) => {
+                highlightNotes(noteIds, note);
+                synth.triggerAttackRelease(note.name, note.duration, time, note.velocity);
+              }, note.time);
+              const id2 = Tone.Transport.schedule((time) => {
+                unhighlightNotes(noteIds, note);
+              }, note.time + note.duration);
+              scheduledIds.push(id1, id2);
+            });
+          });
+          playStartTime = Tone.now();
+          Tone.Transport.start();
+          updateVerovioCursor(0); // show cursor at start
+          updateCursorVerovio(); // start animation
+        },
+        pause: () => {
+          if (!playing) return;
+          Tone.Transport.pause();
+          playing = false;
+          if (cursorAnimationId) cancelAnimationFrame(cursorAnimationId);
+        },
+        stop: () => {
+          Tone.Transport.stop();
+          if (synth) synth.releaseAll && synth.releaseAll();
+          scheduledIds.forEach(id => Tone.Transport.clear(id));
+          scheduledIds = [];
+          document.querySelectorAll('#meiContainer .note-highlight').forEach(el => el.classList.remove('note-highlight'));
+          removeCursor();
+          playing = false;
+          pauseTime = 0;
+          playStartTime = 0;
+        }
+      };
+    });
+  </script>
+</body>
+</html>
